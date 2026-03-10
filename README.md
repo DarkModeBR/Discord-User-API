@@ -8,18 +8,17 @@
 
 1. [Visão Geral](#1-visão-geral)
 2. [Fundamentos — Headers & Autenticação](#2-fundamentos--headers--autenticação)
-3. [Sistema de IDs — Snowflakes](#3-sistema-de-ids--snowflakes)
-4. [Rate Limits](#4-rate-limits)
-5. [Autenticação & Login](#5-autenticação--login)
-6. [Usuários](#6-usuários)
-7. [Mensagens](#7-mensagens)
-8. [Canais](#8-canais)
-9. [Servidores (Guilds)](#9-servidores-guilds)
-10. [Relacionamentos (Amigos)](#10-relacionamentos-amigos)
-11. [WebSocket / Gateway](#11-websocket--gateway)
-12. [Eventos do Gateway](#12-eventos-do-gateway)
-13. [CDN — Imagens & Assets](#13-cdn--imagens--assets)
-14. [Códigos de Erro](#14-códigos-de-erro)
+3. [Autenticação & Login](#3-autenticação--login)
+4. [Usuários](#4-usuários)
+5. [Mensagens](#5-mensagens)
+6. [Canais](#6-canais)
+7. [Servidores (Guilds)](#7-servidores-guilds)
+8. [Relacionamentos (Amigos)](#8-relacionamentos-amigos)
+9. [CDN — Imagens & Assets](#9-cdn--imagens--assets)
+10. [Webhooks](#10-webhooks)
+11. [Busca de Mensagens](#11-busca-de-mensagens)
+12. [Convites (Invites)](#12-convites-invites)
+13. [Formatação de Texto (Markdown)](#13-formatação-de-texto-markdown)
 
 ---
 
@@ -33,11 +32,11 @@ https://discord.com/api/v9
 
 O Discord usa a **versão 9** como padrão no client atual. A versão 10 também está disponível e é usada pela API oficial de bots.
 
-| Versão | Status     | Observação                         |
-|--------|------------|------------------------------------|
-| v6     | Depreciada | Versão legada, ainda funcional     |
-| v9     | Atual      | Usada pelo client oficial          |
-| v10    | Atual      | Recomendada para bots              |
+| Versão | Status     | Observação                      |
+|--------|------------|---------------------------------|
+| v6     | Depreciada | Versão legada, ainda funcional  |
+| v9     | Atual      | Usada pelo client oficial       |
+| v10    | Atual      | Recomendada para bots           |
 
 ### Protocolos
 
@@ -129,102 +128,17 @@ const encoded = btoa(JSON.stringify(props));
 
 ### Token de Usuário vs Token de Bot
 
-| Tipo           | Prefixo no Header        | Acesso                                      |
-|----------------|--------------------------|---------------------------------------------|
-| User Token     | Sem prefixo (`mfa.xxx` ou `NDk...`) | Todas as rotas do usuário |
-| Bot Token      | `Bot <token>`            | Rotas de bot (API oficial)                 |
-| OAuth2 Bearer  | `Bearer <token>`         | Acesso escopado via OAuth2                 |
+| Tipo          | Prefixo no Header                   | Acesso                            |
+|---------------|-------------------------------------|-----------------------------------|
+| User Token    | Sem prefixo (`mfa.xxx` ou `NDk...`) | Todas as rotas do usuário         |
+| Bot Token     | `Bot <token>`                       | Rotas de bot (API oficial)        |
+| OAuth2 Bearer | `Bearer <token>`                    | Acesso escopado via OAuth2        |
 
 > **User tokens** são os tokens que o app do Discord usa internamente. Eles ficam armazenados no `localStorage` do browser (`token`) ou no `leveldb` do Electron.
 
 ---
 
-## 3. Sistema de IDs — Snowflakes
-
-O Discord usa o formato **Snowflake** do Twitter para todos os IDs (usuários, mensagens, canais, servidores, etc.).
-
-### Estrutura de um Snowflake (64 bits)
-
-```
-63                                                   22          17     12        0
- +-------------------------------------------------+------------+------+----------+
- |          Timestamp (42 bits)                    | Worker ID  | PID  | Sequence |
- |  Milissegundos desde 01/01/2015 (Discord Epoch) |  (5 bits)  |(5b)  |  (12 b)  |
- +-------------------------------------------------+------------+------+----------+
-```
-
-- **Discord Epoch:** `1420070400000` (01/01/2015 em milissegundos)
-
-### Extraindo o timestamp de um Snowflake
-
-```js
-function snowflakeToDate(snowflake) {
-  const timestamp = BigInt(snowflake) >> 22n;
-  return new Date(Number(timestamp) + 1420070400000);
-}
-
-snowflakeToDate("1234567890123456789");
-// → Data de criação do objeto
-```
-
-### Gerando um Snowflake de um timestamp (para paginação)
-
-```js
-function dateToSnowflake(date) {
-  const timestamp = BigInt(date.getTime()) - 1420070400000n;
-  return String(timestamp << 22n);
-}
-```
-
-> IDs são sempre retornados como **strings** no JSON da API para evitar overflow em linguagens que não suportam inteiros de 64 bits nativamente (como JavaScript).
-
----
-
-## 4. Rate Limits
-
-O Discord implementa rate limiting por rota e globalmente, seguindo a RFC 6585.
-
-### Headers de Rate Limit (resposta)
-
-```http
-X-RateLimit-Limit: 5
-X-RateLimit-Remaining: 3
-X-RateLimit-Reset: 1470173023
-X-RateLimit-Reset-After: 1.5
-X-RateLimit-Bucket: abcd1234
-X-RateLimit-Global: true       (apenas em 429 global)
-X-RateLimit-Scope: user        (apenas em 429)
-```
-
-| Header                  | Descrição                                                   |
-|-------------------------|-------------------------------------------------------------|
-| `X-RateLimit-Limit`     | Máximo de requests no bucket atual                         |
-| `X-RateLimit-Remaining` | Requests restantes no bucket atual                         |
-| `X-RateLimit-Reset`     | Epoch (segundos) em que o limite reseta                    |
-| `X-RateLimit-Reset-After` | Segundos até o reset (com decimais para precisão)       |
-| `X-RateLimit-Bucket`    | Identificador único do bucket de rate limit                |
-| `X-RateLimit-Global`    | Indica rate limit global (retornado apenas no HTTP 429)    |
-
-### Resposta HTTP 429 (Too Many Requests)
-
-```json
-{
-  "message": "You are being rate limited.",
-  "retry_after": 1.337,
-  "global": false
-}
-```
-
-### Boas práticas
-
-- **Nunca hard-code rate limits** — eles mudam dinamicamente
-- Sempre leia o header `Retry-After` antes de retentar
-- Ignorar rate limits de forma persistente resulta em **ban de IP ou conta**
-- Implemente **jitter aleatório** em automações para evitar padrões detectáveis
-
----
-
-## 5. Autenticação & Login
+## 3. Autenticação & Login
 
 ### Login com Email/Senha
 
@@ -303,27 +217,9 @@ Content-Type: application/json
 }
 ```
 
-### Remote Auth (Login via QR Code)
-
-O client desktop usa WebSocket para o fluxo de QR code:
-
-```
-wss://remote-auth-gateway.discord.gg/?v=2
-```
-
-**Fluxo:**
-1. Client conecta ao WebSocket de remote auth
-2. Recebe `op: hello` com o heartbeat interval
-3. Gera keypair RSA-2048 e envia `op: init` com a chave pública
-4. Recebe `op: nonce_proof` — deve responder com o nonce decifrado
-5. Recebe `op: pending_remote_init` com o **fingerprint**
-6. Fingerprint é encodado em QR: `https://discord.com/ra/<fingerprint>`
-7. Ao escanear no mobile, recebe `op: pending_finish` com dados do usuário (cifrados)
-8. Ao confirmar no mobile, recebe `op: finish` com o token de autenticação
-
 ---
 
-## 6. Usuários
+## 4. Usuários
 
 ### Obter o próprio perfil
 
@@ -358,13 +254,6 @@ GET /users/{user_id}
 Authorization: <token>
 ```
 
-### Obter perfil completo (com mutual friends, guilds, etc.)
-
-```http
-GET /users/{user_id}/profile?with_mutual_guilds=true&with_mutual_friends=true
-Authorization: <token>
-```
-
 ### Atualizar o próprio perfil
 
 ```http
@@ -381,20 +270,9 @@ Content-Type: application/json
 }
 ```
 
-### Configurações do usuário (proto-encoded)
-
-O Discord migrou as configurações para o formato **proto binário**. O endpoint é:
-
-```http
-GET /users/@me/settings-proto/1     ← Configurações de usuário
-GET /users/@me/settings-proto/2     ← Configurações de frequência
-GET /users/@me/settings-proto/3     ← Pasta de guilds
-PATCH /users/@me/settings-proto/1
-```
-
 ---
 
-## 7. Mensagens
+## 5. Mensagens
 
 ### Buscar mensagens de um canal
 
@@ -405,12 +283,12 @@ Authorization: <token>
 
 **Parâmetros de query:**
 
-| Parâmetro | Tipo      | Descrição                                          |
-|-----------|-----------|----------------------------------------------------|
-| `limit`   | integer   | 1–100, default 50                                  |
-| `before`  | snowflake | Mensagens anteriores a este ID                    |
-| `after`   | snowflake | Mensagens posteriores a este ID                   |
-| `around`  | snowflake | Mensagens em torno deste ID (mutuamente exclusivos)|
+| Parâmetro | Tipo      | Descrição                                           |
+|-----------|-----------|-----------------------------------------------------|
+| `limit`   | integer   | 1–100, default 50                                   |
+| `before`  | snowflake | Mensagens anteriores a este ID                      |
+| `after`   | snowflake | Mensagens posteriores a este ID                     |
+| `around`  | snowflake | Mensagens em torno deste ID (mutuamente exclusivos) |
 
 ### Enviar mensagem
 
@@ -440,24 +318,6 @@ Content-Type: application/json
     "channel_id": "123456789012345678",
     "guild_id": "111111111111111111"
   }
-}
-```
-
-**Com embed:**
-
-```json
-{
-  "content": "",
-  "embeds": [{
-    "title": "Título",
-    "description": "Descrição do embed",
-    "color": 5763719,
-    "fields": [
-      { "name": "Campo 1", "value": "Valor 1", "inline": true }
-    ],
-    "footer": { "text": "Rodapé" },
-    "timestamp": "2025-01-01T00:00:00.000Z"
-  }]
 }
 ```
 
@@ -526,7 +386,7 @@ Content-Type: application/json
 
 ---
 
-## 8. Canais
+## 6. Canais
 
 ### Obter canal
 
@@ -599,27 +459,9 @@ Content-Type: application/json
 }
 ```
 
-### Threads
-
-```http
-// Criar thread a partir de mensagem
-POST /channels/{channel_id}/messages/{message_id}/threads
-
-// Criar thread standalone (em forum ou texto)
-POST /channels/{channel_id}/threads
-
-// Listar threads arquivadas
-GET /channels/{channel_id}/threads/archived/public
-GET /channels/{channel_id}/threads/archived/private
-
-// Entrar/sair de thread
-PUT /channels/{channel_id}/thread-members/@me
-DELETE /channels/{channel_id}/thread-members/@me
-```
-
 ---
 
-## 9. Servidores (Guilds)
+## 7. Servidores (Guilds)
 
 ### Obter informações do servidor
 
@@ -692,20 +534,20 @@ Authorization: <token>
 ### Cargos (Roles)
 
 ```http
-GET /guilds/{guild_id}/roles                       ← listar
-POST /guilds/{guild_id}/roles                      ← criar
-PATCH /guilds/{guild_id}/roles/{role_id}           ← editar
-DELETE /guilds/{guild_id}/roles/{role_id}          ← deletar
-PATCH /guilds/{guild_id}/roles                     ← reordenar (array de {id, position})
+GET /guilds/{guild_id}/roles                    ← listar
+POST /guilds/{guild_id}/roles                   ← criar
+PATCH /guilds/{guild_id}/roles/{role_id}        ← editar
+DELETE /guilds/{guild_id}/roles/{role_id}       ← deletar
+PATCH /guilds/{guild_id}/roles                  ← reordenar (array de {id, position})
 ```
 
 ### Bans
 
 ```http
-GET /guilds/{guild_id}/bans                        ← listar banidos
-GET /guilds/{guild_id}/bans/{user_id}              ← ver ban específico
-PUT /guilds/{guild_id}/bans/{user_id}              ← banir usuário
-DELETE /guilds/{guild_id}/bans/{user_id}           ← desbanir
+GET /guilds/{guild_id}/bans                     ← listar banidos
+GET /guilds/{guild_id}/bans/{user_id}           ← ver ban específico
+PUT /guilds/{guild_id}/bans/{user_id}           ← banir usuário
+DELETE /guilds/{guild_id}/bans/{user_id}        ← desbanir
 ```
 
 ### Convites do servidor
@@ -722,27 +564,27 @@ GET /guilds/{guild_id}/audit-logs?limit=50&action_type=1
 
 **Tipos de ação (`action_type`) comuns:**
 
-| ID | Ação                    |
-|----|-------------------------|
-| 1  | Guild Update            |
-| 10 | Channel Create          |
-| 11 | Channel Update          |
-| 12 | Channel Delete          |
-| 20 | Member Kick             |
-| 21 | Member Prune            |
-| 22 | Member Ban Add          |
-| 23 | Member Ban Remove       |
-| 24 | Member Update           |
-| 25 | Member Role Update      |
-| 30 | Role Create             |
-| 31 | Role Update             |
-| 32 | Role Delete             |
-| 72 | Message Delete          |
-| 74 | Message Bulk Delete     |
+| ID | Ação                |
+|----|---------------------|
+| 1  | Guild Update        |
+| 10 | Channel Create      |
+| 11 | Channel Update      |
+| 12 | Channel Delete      |
+| 20 | Member Kick         |
+| 21 | Member Prune        |
+| 22 | Member Ban Add      |
+| 23 | Member Ban Remove   |
+| 24 | Member Update       |
+| 25 | Member Role Update  |
+| 30 | Role Create         |
+| 31 | Role Update         |
+| 32 | Role Delete         |
+| 72 | Message Delete      |
+| 74 | Message Bulk Delete |
 
 ---
 
-## 10. Relacionamentos (Amigos)
+## 8. Relacionamentos (Amigos)
 
 ### Listar relacionamentos
 
@@ -771,12 +613,12 @@ Authorization: <token>
 
 **Tipos de relacionamento:**
 
-| Tipo | Significado         |
-|------|---------------------|
-| 1    | Amigo               |
-| 2    | Bloqueado           |
-| 3    | Pedido recebido     |
-| 4    | Pedido enviado      |
+| Tipo | Significado              |
+|------|--------------------------|
+| 1    | Amigo                    |
+| 2    | Bloqueado                |
+| 3    | Pedido recebido          |
+| 4    | Pedido enviado           |
 | 5    | Implícito (mesmo servidor) |
 
 ### Enviar pedido de amizade
@@ -822,295 +664,7 @@ Content-Type: application/json
 
 ---
 
-## 11. WebSocket / Gateway
-
-O Gateway é a conexão WebSocket persistente que o client usa para receber eventos em tempo real.
-
-### Conectando ao Gateway
-
-**Passo 1:** Obtenha a URL do Gateway
-
-```http
-GET /gateway
-```
-
-Resposta: `{ "url": "wss://gateway.discord.gg" }`
-
-**Passo 2:** Conecte via WebSocket
-
-```
-wss://gateway.discord.gg/?v=9&encoding=json
-```
-
-Parâmetros opcionais:
-- `encoding=etf` — usa Erlang Term Format (mais eficiente)
-- `compress=zlib-stream` — habilita compressão zlib
-
-### Estrutura do Payload
-
-```json
-{
-  "op": 0,
-  "d": { ... },
-  "s": 42,
-  "t": "MESSAGE_CREATE"
-}
-```
-
-| Campo | Tipo    | Descrição                                            |
-|-------|---------|------------------------------------------------------|
-| `op`  | integer | Opcode do payload                                    |
-| `d`   | object  | Dados do evento (pode ser `null`)                   |
-| `s`   | integer | Número de sequência (apenas em op 0, para heartbeat) |
-| `t`   | string  | Nome do evento (apenas em op 0)                     |
-
-### Tabela de Opcodes
-
-| OP | Nome             | Direção        | Descrição                                            |
-|----|------------------|----------------|------------------------------------------------------|
-| 0  | Dispatch         | Servidor→Client | Evento de dispatch (maioria dos eventos)            |
-| 1  | Heartbeat        | Ambos          | Ping para manter conexão viva                        |
-| 2  | Identify         | Client→Servidor | Autenticação inicial                                |
-| 3  | Presence Update  | Client→Servidor | Atualizar status/presença                           |
-| 4  | Voice State Update | Client→Servidor | Entrar/sair de canal de voz                       |
-| 6  | Resume           | Client→Servidor | Retomar sessão após desconexão                      |
-| 7  | Reconnect        | Servidor→Client | Servidor pede reconexão                             |
-| 8  | Request Guild Members | Client→Servidor | Solicitar lista de membros                    |
-| 9  | Invalid Session  | Servidor→Client | Sessão inválida, re-identificar necessário          |
-| 10 | Hello            | Servidor→Client | Primeiro payload, com heartbeat_interval            |
-| 11 | Heartbeat ACK    | Servidor→Client | Confirmação de heartbeat recebido                   |
-
-### Fluxo completo de conexão
-
-```
-Client                          Gateway
-  |                                 |
-  |──── WebSocket Connect ─────────>|
-  |                                 |
-  |<─── OP 10 Hello ───────────────|
-  |   { heartbeat_interval: 41250 } |
-  |                                 |
-  |──── OP 1 Heartbeat ────────────>|   ← Enviar imediatamente
-  |   { "op": 1, "d": null }        |
-  |                                 |
-  |<─── OP 11 Heartbeat ACK ───────|
-  |                                 |
-  |──── OP 2 Identify ─────────────>|
-  |   (ver estrutura abaixo)        |
-  |                                 |
-  |<─── OP 0 READY ────────────────|
-  |   (dados iniciais da sessão)    |
-  |                                 |
-  |<─── OP 0 GUILD_CREATE ─────────|   ← Múltiplos, um por servidor
-  |                                 |
-  |  ... eventos em tempo real ...  |
-  |                                 |
-  |──── OP 1 Heartbeat ────────────>|   ← A cada heartbeat_interval ms
-```
-
-### OP 2 — Identify (User Client)
-
-```json
-{
-  "op": 2,
-  "d": {
-    "token": "<seu_token>",
-    "capabilities": 30717,
-    "properties": {
-      "os": "Windows",
-      "browser": "Chrome",
-      "device": "",
-      "system_locale": "pt-BR",
-      "browser_user_agent": "Mozilla/5.0 ...",
-      "browser_version": "136.0.0.0",
-      "os_version": "10",
-      "referrer": "",
-      "referring_domain": "",
-      "referrer_current": "",
-      "referring_domain_current": "",
-      "release_channel": "stable",
-      "client_build_number": 369171,
-      "client_event_source": null
-    },
-    "presence": {
-      "status": "online",
-      "since": 0,
-      "activities": [],
-      "afk": false
-    },
-    "compress": false,
-    "client_state": {
-      "guild_versions": {},
-      "highest_last_message_id": "0",
-      "read_state_version": 0,
-      "user_guild_settings_version": -1,
-      "user_settings_version": -1,
-      "private_channels_version": "0",
-      "api_code_version": 0
-    }
-  }
-}
-```
-
-> O campo `capabilities` é uma **bitmask** que indica quais recursos o client suporta. O valor `30717` é o usado pelo client web atual.
-
-### OP 3 — Presence/Status Update
-
-```json
-{
-  "op": 3,
-  "d": {
-    "status": "online",
-    "since": 0,
-    "afk": false,
-    "activities": [
-      {
-        "name": "Visual Studio Code",
-        "type": 0,
-        "details": "Editando arquivo.py",
-        "state": "No workspace"
-      }
-    ]
-  }
-}
-```
-
-**Tipos de status:** `online`, `idle`, `dnd`, `invisible`
-
-**Tipos de atividade (`type`):**
-
-| Tipo | Nome      | Exibição             |
-|------|-----------|----------------------|
-| 0    | Playing   | "Jogando X"          |
-| 1    | Streaming | "Transmitindo X"     |
-| 2    | Listening | "Ouvindo X"          |
-| 3    | Watching  | "Assistindo X"       |
-| 4    | Custom    | Status personalizado |
-| 5    | Competing | "Competindo em X"    |
-
-### OP 6 — Resume (Retomar sessão)
-
-```json
-{
-  "op": 6,
-  "d": {
-    "token": "<seu_token>",
-    "session_id": "abc123...",
-    "seq": 1337
-  }
-}
-```
-
-### Heartbeat
-
-O client deve enviar um heartbeat a cada `heartbeat_interval` milissegundos:
-
-```json
-{
-  "op": 1,
-  "d": 1337
-}
-```
-
-onde `d` é o último número de sequência recebido (campo `s` do último OP 0), ou `null` se nenhum foi recebido.
-
-Se o servidor não responder com OP 11 antes do próximo heartbeat, feche a conexão e reconecte.
-
----
-
-## 12. Eventos do Gateway
-
-Os eventos chegam como OP 0 com o campo `t` indicando o tipo.
-
-### Eventos de Mensagem
-
-| Evento               | Descrição                          |
-|----------------------|------------------------------------|
-| `MESSAGE_CREATE`     | Nova mensagem enviada              |
-| `MESSAGE_UPDATE`     | Mensagem editada                   |
-| `MESSAGE_DELETE`     | Mensagem deletada                  |
-| `MESSAGE_DELETE_BULK`| Múltiplas mensagens deletadas      |
-| `MESSAGE_REACTION_ADD` | Reação adicionada               |
-| `MESSAGE_REACTION_REMOVE` | Reação removida             |
-| `TYPING_START`       | Usuário começou a digitar          |
-
-### Eventos de Presença
-
-| Evento             | Descrição                            |
-|--------------------|--------------------------------------|
-| `PRESENCE_UPDATE`  | Status/atividade de usuário mudou    |
-
-### Eventos de Canais
-
-| Evento              | Descrição                          |
-|---------------------|------------------------------------|
-| `CHANNEL_CREATE`    | Canal criado                       |
-| `CHANNEL_UPDATE`    | Canal atualizado                   |
-| `CHANNEL_DELETE`    | Canal deletado                     |
-| `THREAD_CREATE`     | Thread criada                      |
-| `THREAD_UPDATE`     | Thread atualizada                  |
-| `THREAD_DELETE`     | Thread deletada                    |
-
-### Eventos de Servidor
-
-| Evento               | Descrição                          |
-|----------------------|------------------------------------|
-| `GUILD_CREATE`       | Servidor carregado/entrado         |
-| `GUILD_UPDATE`       | Servidor atualizado                |
-| `GUILD_DELETE`       | Servidor deletado / saiu           |
-| `GUILD_MEMBER_ADD`   | Membro entrou                      |
-| `GUILD_MEMBER_UPDATE`| Membro atualizado                  |
-| `GUILD_MEMBER_REMOVE`| Membro saiu/foi removido           |
-| `GUILD_ROLE_CREATE`  | Cargo criado                       |
-| `GUILD_ROLE_UPDATE`  | Cargo atualizado                   |
-| `GUILD_ROLE_DELETE`  | Cargo deletado                     |
-| `GUILD_BAN_ADD`      | Usuário banido                     |
-| `GUILD_BAN_REMOVE`   | Ban removido                       |
-
-### Evento READY
-
-O evento mais importante — enviado após o Identify bem-sucedido:
-
-```json
-{
-  "t": "READY",
-  "op": 0,
-  "d": {
-    "v": 9,
-    "user": { "id": "...", "username": "...", ... },
-    "guilds": [ { "id": "...", "unavailable": true }, ... ],
-    "session_id": "abc123...",
-    "resume_gateway_url": "wss://gateway-us-east1-b.discord.gg",
-    "shard": [0, 1],
-    "application": { "id": "...", "flags": 0 }
-  }
-}
-```
-
-> Salve o `session_id` e o `resume_gateway_url` para poder reconectar com OP 6 Resume.
-
-### Códigos de fechamento WebSocket
-
-| Código | Pode reconectar? | Descrição                              |
-|--------|------------------|----------------------------------------|
-| 4000   | ✅               | Erro desconhecido                      |
-| 4001   | ✅               | Opcode desconhecido                    |
-| 4002   | ✅               | Payload inválido                       |
-| 4003   | ✅               | Não autenticado                        |
-| 4004   | ❌               | Token inválido                         |
-| 4005   | ✅               | Já autenticado                         |
-| 4007   | ✅               | Sequência inválida no Resume           |
-| 4008   | ✅               | Rate limited                           |
-| 4009   | ✅               | Sessão expirada                        |
-| 4010   | ❌               | Shard inválido                         |
-| 4011   | ❌               | Sharding necessário                    |
-| 4012   | ❌               | Versão da API inválida                 |
-| 4013   | ❌               | Intents inválidos                      |
-| 4014   | ❌               | Intents não permitidos                 |
-
----
-
-## 13. CDN — Imagens & Assets
+## 9. CDN — Imagens & Assets
 
 Base URL: `https://cdn.discordapp.com`
 
@@ -1171,75 +725,314 @@ https://cdn.discordapp.com/attachments/{channel_id}/{attachment_id}/{filename}
 
 ---
 
-## 14. Códigos de Erro
+## 10. Webhooks
 
-### Erros HTTP
+### Criar webhook em um canal
 
-| Código | Significado                              |
-|--------|------------------------------------------|
-| 200    | OK                                       |
-| 201    | Created                                  |
-| 204    | No Content                               |
-| 304    | Not Modified                             |
-| 400    | Bad Request                              |
-| 401    | Unauthorized (token inválido/ausente)    |
-| 403    | Forbidden (sem permissão)                |
-| 404    | Not Found                                |
-| 405    | Method Not Allowed                       |
-| 429    | Too Many Requests (rate limited)         |
-| 502    | Gateway Unavailable                      |
-| 5xx    | Erro interno do Discord                  |
+```http
+POST /channels/{channel_id}/webhooks
+Authorization: <token>
+Content-Type: application/json
 
-### Erros JSON da API
-
-```json
 {
-  "code": 50013,
-  "message": "Missing Permissions",
-  "errors": {
-    "content": {
-      "_errors": [
-        { "code": "BASE_TYPE_MAX_LENGTH", "message": "Must be 4000 or fewer in length." }
-      ]
-    }
-  }
+  "name": "Meu Webhook",
+  "avatar": "data:image/png;base64,<base64>"
 }
 ```
 
-### Códigos de Erro Comuns
+**Resposta:**
 
-| Código  | Mensagem                              |
-|---------|---------------------------------------|
-| 0       | General error                         |
-| 10001   | Unknown Account                       |
-| 10002   | Unknown Application                   |
-| 10003   | Unknown Channel                       |
-| 10004   | Unknown Guild                         |
-| 10006   | Unknown Invite                        |
-| 10007   | Unknown Member                        |
-| 10008   | Unknown Message                       |
-| 10011   | Unknown Role                          |
-| 10013   | Unknown User                          |
-| 20001   | Bots cannot use this endpoint         |
-| 20002   | Only bots can use this endpoint       |
-| 40001   | Unauthorized                          |
-| 40002   | Verification required                 |
-| 40007   | User is banned from the guild         |
-| 50001   | Missing Access                        |
-| 50007   | Cannot send messages to this user     |
-| 50013   | Missing Permissions                   |
-| 50035   | Invalid Form Body                     |
-| 90001   | Reaction blocked                      |
-| 130000  | API resource is currently overloaded  |
+```json
+{
+  "id": "webhook_id",
+  "type": 1,
+  "guild_id": "guild_id",
+  "channel_id": "channel_id",
+  "name": "Meu Webhook",
+  "avatar": null,
+  "token": "token_do_webhook",
+  "url": "https://discord.com/api/webhooks/{id}/{token}"
+}
+```
+
+### Listar webhooks de um canal
+
+```http
+GET /channels/{channel_id}/webhooks
+Authorization: <token>
+```
+
+### Listar webhooks de um servidor
+
+```http
+GET /guilds/{guild_id}/webhooks
+Authorization: <token>
+```
+
+### Executar webhook (enviar mensagem)
+
+```http
+POST /webhooks/{webhook_id}/{webhook_token}
+Content-Type: application/json
+
+{
+  "content": "Mensagem do webhook!",
+  "username": "Nome customizado",
+  "avatar_url": "https://exemplo.com/avatar.png",
+  "tts": false,
+  "embeds": [
+    {
+      "title": "Título do Embed",
+      "description": "Descrição",
+      "color": 5763719
+    }
+  ]
+}
+```
+
+> Adicione `?wait=true` para receber o objeto da mensagem criada na resposta.
+
+**Limites dos embeds via webhook:**
+
+| Campo          | Limite     |
+|----------------|------------|
+| `title`        | 256 chars  |
+| `description`  | 4096 chars |
+| `field.name`   | 256 chars  |
+| `field.value`  | 1024 chars |
+| `footer.text`  | 2048 chars |
+| `author.name`  | 256 chars  |
+| Total embed    | 6000 chars |
+| Embeds por msg | até 10     |
+
+### Editar mensagem do webhook
+
+```http
+PATCH /webhooks/{webhook_id}/{webhook_token}/messages/{message_id}
+Content-Type: application/json
+
+{
+  "content": "Mensagem editada"
+}
+```
+
+### Deletar mensagem do webhook
+
+```http
+DELETE /webhooks/{webhook_id}/{webhook_token}/messages/{message_id}
+```
+
+### Editar o webhook
+
+```http
+PATCH /webhooks/{webhook_id}/{webhook_token}
+Content-Type: application/json
+
+{
+  "name": "Novo Nome",
+  "channel_id": "novo_channel_id"
+}
+```
+
+### Deletar o webhook
+
+```http
+DELETE /webhooks/{webhook_id}/{webhook_token}
+```
 
 ---
 
-## Referências & Recursos
+## 11. Busca de Mensagens
 
-- [Discord Userdoccers](https://docs.discord.food) — Documentação não oficial detalhada
-- [Luna's Unofficial Docs](https://luna.gitlab.io/discord-unofficial-docs/) — Documentação de endpoints ocultos
-- [Discord API Endpoints (Gist)](https://gist.github.com/hackermondev/5c928ca12b4f4e6320100b11f798c23b) — Lista completa de endpoints do client v9
+O Discord possui um endpoint de busca que **não está na API oficial de bots** — é exclusivo do client de usuário.
+
+### Buscar mensagens em um canal
+
+```http
+GET /channels/{channel_id}/messages/search?q=termo&limit=25
+Authorization: <token>
+```
+
+### Buscar mensagens em um servidor inteiro
+
+```http
+GET /guilds/{guild_id}/messages/search?q=termo&limit=25
+Authorization: <token>
+```
+
+**Parâmetros disponíveis:**
+
+| Parâmetro    | Tipo      | Descrição                                                         |
+|--------------|-----------|-------------------------------------------------------------------|
+| `q`          | string    | Termo de busca (obrigatório)                                      |
+| `limit`      | integer   | 1–25, default 25                                                  |
+| `offset`     | integer   | Paginação por offset                                              |
+| `author_id`  | snowflake | Filtrar por autor                                                 |
+| `mentions`   | snowflake | Mensagens que mencionam este usuário                              |
+| `has`        | string    | `link`, `embed`, `file`, `video`, `image`, `sound`, `sticker`    |
+| `channel_id` | snowflake | Restringir a um canal específico (em guilds)                      |
+| `min_id`     | snowflake | Snowflake mínimo (data mais antiga)                               |
+| `max_id`     | snowflake | Snowflake máximo (data mais recente)                              |
+| `sort_by`    | string    | `timestamp` ou `relevance`                                        |
+| `sort_order` | string    | `asc` ou `desc`                                                   |
+| `pinned`     | boolean   | Apenas mensagens fixadas                                          |
+
+**Resposta:**
+
+```json
+{
+  "messages": [
+    [ { "id": "...", "content": "Mensagem encontrada", "..." : "..." } ]
+  ],
+  "total_results": 142,
+  "analytics_id": "abc123..."
+}
+```
+
+> Cada item em `messages` é um array — o primeiro elemento é a mensagem encontrada, e os demais são mensagens vizinhas fornecidas como contexto.
 
 ---
 
-*Documentação gerada para fins educacionais. Última atualização: Março 2026.*
+## 12. Convites (Invites)
+
+### Obter informações de um convite
+
+```http
+GET /invites/{invite_code}?with_counts=true&with_expiration=true
+```
+
+> Este endpoint **não precisa de autenticação** — é público.
+
+**Resposta:**
+
+```json
+{
+  "code": "discord",
+  "type": 0,
+  "expires_at": null,
+  "guild": {
+    "id": "...",
+    "name": "Discord",
+    "splash": null,
+    "banner": null,
+    "icon": "...",
+    "description": "...",
+    "features": [],
+    "verification_level": 0,
+    "vanity_url_code": "discord"
+  },
+  "channel": {
+    "id": "...",
+    "type": 0,
+    "name": "general"
+  },
+  "inviter": { "id": "...", "username": "...", "avatar": "..." },
+  "approximate_member_count": 123456,
+  "approximate_presence_count": 45678
+}
+```
+
+### Criar convite em um canal
+
+```http
+POST /channels/{channel_id}/invites
+Authorization: <token>
+Content-Type: application/json
+
+{
+  "max_age": 86400,
+  "max_uses": 10,
+  "temporary": false,
+  "unique": true
+}
+```
+
+**Parâmetros:**
+
+| Campo       | Tipo    | Descrição                                    |
+|-------------|---------|----------------------------------------------|
+| `max_age`   | integer | Duração em segundos (0 = sem expiração)      |
+| `max_uses`  | integer | Usos máximos (0 = ilimitado)                 |
+| `temporary` | boolean | Membro é kickado ao sair da voz              |
+| `unique`    | boolean | Gerar código único mesmo para configs iguais |
+
+### Deletar convite
+
+```http
+DELETE /invites/{invite_code}
+Authorization: <token>
+```
+
+### Listar convites de um canal
+
+```http
+GET /channels/{channel_id}/invites
+Authorization: <token>
+```
+
+---
+
+## 13. Formatação de Texto (Markdown)
+
+O Discord suporta um subset do Markdown com extensões próprias.
+
+### Formatação básica
+
+| Sintaxe                | Resultado             |
+|------------------------|-----------------------|
+| `**texto**`            | **negrito**           |
+| `*texto*` ou `_texto_` | *itálico*             |
+| `***texto***`          | ***negrito+itálico*** |
+| `__texto__`            | sublinhado            |
+| `~~texto~~`            | ~~tachado~~           |
+| `` `código` ``         | `código inline`       |
+| ` ```código``` `       | bloco de código       |
+| `> texto`              | citação               |
+| `>>> texto`            | citação em bloco      |
+| `# Título`             | cabeçalho H1          |
+| `## Título`            | cabeçalho H2          |
+| `### Título`           | cabeçalho H3          |
+| `- item` ou `* item`   | lista                 |
+| `1. item`              | lista numerada        |
+| `\|\|spoiler\|\|`      | texto de spoiler      |
+
+### Mentions e IDs
+
+| Sintaxe          | Tipo                        |
+|------------------|-----------------------------|
+| `<@USER_ID>`     | Mencionar usuário           |
+| `<@!USER_ID>`    | Mencionar membro (com nick) |
+| `<#CHANNEL_ID>`  | Mencionar canal             |
+| `<@&ROLE_ID>`    | Mencionar cargo             |
+| `@everyone`      | Mencionar todos             |
+| `@here`          | Mencionar membros online    |
+
+### Emojis
+
+| Sintaxe          | Tipo                       |
+|------------------|----------------------------|
+| `:emoji_name:`   | Emoji Unicode por nome     |
+| `<:nome:ID>`     | Emoji customizado estático |
+| `<a:nome:ID>`    | Emoji customizado animado  |
+
+### Timestamps
+
+O Discord suporta timestamps dinâmicos que se adaptam ao fuso horário do usuário:
+
+```
+<t:UNIX_TIMESTAMP>      → Data/hora padrão
+<t:UNIX_TIMESTAMP:d>    → Data curta:  20/01/2025
+<t:UNIX_TIMESTAMP:D>    → Data longa:  20 de janeiro de 2025
+<t:UNIX_TIMESTAMP:t>    → Hora curta:  16:20
+<t:UNIX_TIMESTAMP:T>    → Hora longa:  16:20:30
+<t:UNIX_TIMESTAMP:f>    → Data + hora: 20 de janeiro de 2025 16:20
+<t:UNIX_TIMESTAMP:F>    → Completo:    segunda-feira, 20 de janeiro de 2025 16:20
+<t:UNIX_TIMESTAMP:R>    → Relativo:    há 2 dias / em 3 horas
+```
+
+**Exemplo:**
+
+```
+Reunião: <t:1737993600:F> (<t:1737993600:R>)
+→ Reunião: segunda-feira, 27 de janeiro de 2025 18:00 (em 2 dias)
+```
